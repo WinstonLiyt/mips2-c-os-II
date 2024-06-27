@@ -44,3 +44,21 @@ The overall block diagram of the practical OpenMIPS system design is shown below
 In this experiment, the previous 89 versions of the experimental OpenMIPS will be improved to create a practical version of OpenMIPS for porting the µC/OS-II system. The design approach and improvements are illustrated in the diagram below.
 ![image](https://github.com/WinstonLiyt/mips2-c-os-II/assets/104308117/42f59f55-35a2-444b-b752-20087789fe29)
 ![image](https://github.com/WinstonLiyt/mips2-c-os-II/assets/104308117/731a69e7-ae4a-46bd-a917-4007d9eec522)
+
+**For more details:**
+1. **Embedded Real-Time Operating System (RTOS) Characteristics:**
+   - An RTOS executes predefined tasks with specific requirements.
+   - It reduces size and cost while ensuring timely responses and high reliability.
+   - RTOS like μC/OS-II are used in various applications, including mobile phones, routers, UPS, and aircraft, with proven reliability certified by the FAA.
+
+2. **Porting Process:**
+   - The μC/OS-II system is ported to the NEXYS 4 DDR development board.
+   - The process includes setting up a cross-compilation environment on Ubuntu to modify and compile the μC/OS-II system.
+
+3. **System Integration:**
+   - The experiment builds upon a base OpenMIPS CPU implementation, enhancing it with components like Wishbone bus, GPIO, UART, Flash controller, and SDRAM controller.
+   - These components are integrated into a small System on Programmable Chip (SOPC) system to support the μC/OS-II operating system.
+
+4. **Verification:**
+   - The system's functionality is verified using a serial port tool to observe the results.
+   - The successful execution of the μC/OS-II system on the development board demonstrates the porting success.
