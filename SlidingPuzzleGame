@@ -1,0 +1,375 @@
+#include "includes.h"
+
+#define BOTH_EMPTY (UART_LS_TEMT | UART_LS_THRE)
+
+#define WAIT_FOR_XMITR                       \
+    do                                       \
+    {                                        \
+        lsr = REG8(UART_BASE + UART_LS_REG); \
+    } while ((lsr & BOTH_EMPTY) != BOTH_EMPTY)
+
+#define WAIT_FOR_THRE                        \
+    do                                       \
+    {                                        \
+        lsr = REG8(UART_BASE + UART_LS_REG); \
+    } while ((lsr & UART_LS_THRE) != UART_LS_THRE)
+
+#define TASK_STK_SIZE 512
+
+OS_STK TaskStartStk[TASK_STK_SIZE];
+
+char Info[100] = "@Play Sliding Puzzle Game! \n  @Author: 2150260 ytLi\n  @Copyright: CS@Tongji\n";
+
+void uart_init(void)
+{
+    INT32U divisor = (INT32U)IN_CLK / (16 * UART_BAUD_RATE);
+    REG8(UART_BASE + UART_LC_REG) = 0x80;
+    REG8(UART_BASE + UART_DLB1_REG) = divisor & 0xFF;
+    REG8(UART_BASE + UART_DLB2_REG) = (divisor >> 8) & 0xFF;
+    REG8(UART_BASE + UART_LC_REG) = 0x00;
+    REG8(UART_BASE + UART_IE_REG) = 0x00;
+    REG8(UART_BASE + UART_LC_REG) = UART_LC_WLEN8 | UART_LC_ONE_STOP | UART_LC_NO_PARITY;
+}
+
+void uart_putc(char c)
+{
+    unsigned char lsr;
+    WAIT_FOR_THRE;
+    REG8(UART_BASE + UART_TH_REG) = c;
+    if (c == '\n')
+    {
+        WAIT_FOR_THRE;
+        REG8(UART_BASE + UART_TH_REG) = '\r';
+    }
+    WAIT_FOR_XMITR;
+}
+
+INT32U uart_getc(void)
+{
+    unsigned char lsr;
+    do
+    {
+        lsr = REG8(UART_BASE + UART_LS_REG);
+    } while ((lsr & 0x01) == 0);
+    return (INT32U)REG8(UART_BASE + UART_TH_REG);
+}
+
+void uart_print_str(char *str)
+{
+    INT32U i = 0;
+    OS_CPU_SR cpu_sr;
+    OS_ENTER_CRITICAL();
+    while (str[i] != 0)
+    {
+        uart_putc(str[i]);
+        i++;
+    }
+    OS_EXIT_CRITICAL();
+}
+
+void int32u_to_str(INT32U num, char *str)
+{
+    // Ensure the buffer is large enough
+    if (str == NULL)
+    {
+        return;
+    }
+
+    // Handle the special case where num is 0
+    if (num == 0)
+    {
+        str[0] = '0';
+        str[1] = '\0';
+        return;
+    }
+
+    // Buffer to hold the string representation of the number
+    char buffer[12]; // Max 10 digits for 32-bit number + sign + null terminator
+    int i = 0;
+
+    // Process each digit
+    while (num != 0)
+    {
+        buffer[i++] = '0' + (num % 10);
+        num /= 10;
+    }
+
+    // Reverse the string
+    int j;
+    for (j = 0; j < i; j++)
+    {
+        str[j] = buffer[i - j - 1];
+    }
+    str[j] = '\0';
+}
+
+void gpio_init()
+{
+    REG32(GPIO_BASE + GPIO_OE_REG) = 0xFFFFFFFF;
+    REG32(GPIO_BASE + GPIO_INTE_REG) = 0x00000000;
+    gpio_out(0x0f0f0f0f);
+}
+
+void gpio_out(INT32U number)
+{
+    REG32(GPIO_BASE + GPIO_OUT_REG) = number;
+}
+
+INT32U gpio_in()
+{
+    return REG32(GPIO_BASE + GPIO_IN_REG);
+}
+
+void OSInitTick(void)
+{
+    INT32U compare = (INT32U)(IN_CLK / OS_TICKS_PER_SEC);
+    asm volatile("mtc0 %0, $9" : : "r"(0x0));
+    asm volatile("mtc0 %0, $11" : : "r"(compare));
+    asm volatile("mtc0 %0, $12" : : "r"(0x10000401));
+}
+
+void printUnit(INT32U unit)
+{
+    if (unit == 0)
+    {
+        uart_print_str(" ");
+    }
+    else
+    {
+        char str[4];
+        int32u_to_str(unit, str);
+        uart_print_str(str);
+    }
+}
+
+void printBoard(INT32U *board)
+{
+    int i;
+    uart_print_str("  -   -   -  \n"); // Top border
+    for (i = 0; i < 9; i++)
+    {
+        uart_print_str("| ");
+        printUnit(board[i]);
+        uart_print_str(" ");
+
+        if ((i + 1) % 3 == 0) // End of row
+        {
+            uart_print_str("|\n");
+            if (i < 8) // Avoid printing the bottom border after the last row
+            {
+                uart_print_str("  -   -   -  \n");
+            }
+        }
+    }
+    uart_print_str("  -   -   -  \n"); // Bottom border
+}
+
+// void printBoard(INT32U *board)
+// {
+//     uart_print_str("  -   -   -  \n");
+//     int i;
+//     for (i = 0; i < 9; i++)
+//     {
+//         uart_print_str("| ");
+
+//         if (board[i] == 0)
+//         {
+//             uart_print_str(" ");
+//         }
+//         else
+//         {
+//             char str1[4];
+//             int32u_to_str(board[i], str1);
+//             uart_print_str(str1);
+//         }
+
+//         if ((i + 1) % 3 == 0)
+//         {
+//             uart_print_str("|\n"); // Right border
+//         }
+//     }
+//     uart_print_str("-------------\n"); // Bottom border
+// }
+
+void swap(INT32U *a, INT32U *b)
+{
+    INT32U temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+INT32U findIndex(INT32U *board, INT32U number)
+{
+    int i;
+    for (i = 0; i < 9; i++)
+    {
+        if (board[i] == number)
+        {
+            return i;
+        }
+    }
+    return 9; // Return an invalid index if not found
+}
+
+void moveTile(INT32U *board, INT32U index, INT32U direction)
+{
+    INT32U newIndex = index;
+    switch (direction)
+    {
+    case 0: // Up
+        if (index > 2)
+        {
+            newIndex = index - 3;
+        }
+        break;
+    case 1: // Down
+        if (index < 6)
+        {
+            newIndex = index + 3;
+        }
+        break;
+    case 2: // Left
+        if (index % 3 != 0)
+        {
+            newIndex = index - 1;
+        }
+        break;
+    case 3: // Right
+        if (index % 3 != 2)
+        {
+            newIndex = index + 1;
+        }
+        break;
+    }
+
+    if (newIndex != index && board[newIndex] == 0)
+    {
+        swap(&board[index], &board[newIndex]);
+    }
+    else
+    {
+        uart_print_str("Invalid direction, try again.\n");
+    }
+}
+
+int checkWinner(INT32U *board)
+{
+    int i;
+    for (i = 0; i < 8; i++)
+    {
+        if (board[i] != i + 1)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+INT32U isValid = 1;
+
+void TaskStart(void *pdata)
+{
+    INT32U board[9] = {1, 2, 3, 4, 5, 6, 7, 0, 8};
+    uart_print_str(Info);
+    uart_print_str("L16-Up, M13-Down, R15-Left, R17-Right.\n");
+    printBoard(board);
+    INT32U gamer = 0;
+
+    for (;;)
+    {
+        INT32U data = gpio_in();
+        INT32U dir = data >> 1; // Assuming 2 bits are used to encode direction
+        INT32U gamer_now = (dir >> 14) & 1;
+
+        if (gamer != gamer_now)
+        {
+            isValid = 1;
+            gamer = gamer_now;
+            // 选择要移动的数字
+            INT32U u_11 = dir & 0x00000800; // 8
+            INT32U u_10 = dir & 0x00000400; // 7
+            INT32U u_9 = dir & 0x00000200;  // 6
+            INT32U u_8 = dir & 0x00000100;  // 5
+            INT32U u_7 = dir & 0x00000080;  // 4
+            INT32U u_6 = dir & 0x00000040;  // 3
+            INT32U u_5 = dir & 0x00000020;  // 2
+            INT32U u_4 = dir & 0x00000010;  // 1
+
+            // 移动的数字的方向
+            INT32U u_3 = dir & 0x00000008; // 右
+            INT32U u_2 = dir & 0x00000004; // 左
+            INT32U u_1 = dir & 0x00000002; // 下
+            INT32U u_0 = dir & 0x00000001; // 上
+
+            INT32U number = u_11 ? 8 : u_10 ? 7
+                                   : u_9    ? 6
+                                   : u_8    ? 5
+                                   : u_7    ? 4
+                                   : u_6    ? 3
+                                   : u_5    ? 2
+                                   : u_4    ? 1
+                                            : 10;
+            INT32U direction = u_3 ? 3 : u_2 ? 2
+                                     : u_1   ? 1
+                                     : u_0   ? 0
+                                             : 5;
+
+            INT32U index = findIndex(board, number);
+            uart_print_str("The number that you choose is ");
+            if (number == 10)
+                uart_print_str("error");
+            else
+            {
+                char num1[1];
+                int32u_to_str(number, num1);
+                uart_print_str(num1);
+            }
+            uart_print_str(", and the direction that you choose is ");
+            // char num2[1];
+            // int32u_to_str(direction, num2);
+            // uart_print_str(num2);
+            if (direction == 0)
+                uart_print_str("Up.\n");
+            else if (direction == 1)
+                uart_print_str("Down.\n");
+            else if (direction == 2)
+                uart_print_str("Left.\n");
+            else if (direction == 3)
+                uart_print_str("Right.\n");
+            else
+                uart_print_str("Error.\n");
+
+            if (index < 9) // 判断数字
+            {
+                if (direction < 4)
+                {
+                    moveTile(board, index, direction);
+                    printBoard(board);
+                    if (checkWinner(board))
+                    {
+                        uart_print_str("You win!\n");
+                    }
+                }
+                else
+                {
+                    uart_print_str("Invalid direction, try again.\n");
+                    printBoard(board);
+                }
+            }
+            else
+            {
+                uart_print_str("Invalid tile index, try again.\n");
+                printBoard(board);
+            }
+        }
+    }
+}
+
+void main()
+{
+    OSInit();
+    uart_init();
+    gpio_init();
+    OSTaskCreate(TaskStart, (void *)0, &TaskStartStk[TASK_STK_SIZE - 1], 0);
+    OSStart();
+}
